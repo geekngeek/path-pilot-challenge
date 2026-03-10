@@ -1,6 +1,8 @@
 import { FormEvent, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { JobCell, CourseCell } from './cells'
+import { CardData, detectAndNormalizeCards, extractFunctionName } from './parsers'
 
 type MessageType =
   | 'USER'
@@ -15,6 +17,7 @@ interface ChatMessage {
   id: string
   type: MessageType
   content: string
+  cards?: CardData
 }
 
 interface SessionInfoChunk {
@@ -272,6 +275,8 @@ export default function App() {
         setLiveAssistantText('')
       }
 
+      let lastFunctionName: string | undefined
+
       const processParsedChunk = (parsed: unknown) => {
         if (isSessionInfoChunk(parsed)) {
           if (parsed.session_id) {
@@ -302,7 +307,9 @@ export default function App() {
           return
         }
 
-        if (type === 'FUNCTION_CALL' || type === 'FUNCTION_RETURN') {
+        if (type === 'FUNCTION_CALL') {
+          const fnName = extractFunctionName(parsedRecord)
+          if (fnName) lastFunctionName = fnName
           setMessages((prev) => [
             ...prev,
             {
@@ -311,6 +318,33 @@ export default function App() {
               content: JSON.stringify(chunk),
             },
           ])
+          return
+        }
+
+        if (type === 'FUNCTION_RETURN') {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: crypto.randomUUID(),
+              type,
+              content: JSON.stringify(chunk),
+            },
+          ])
+
+          const cards = detectAndNormalizeCards(chunkContent, lastFunctionName)
+          if (cards) {
+            flushLiveAssistantText()
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: crypto.randomUUID(),
+                type: 'ASSISTANT',
+                content: '',
+                cards,
+              },
+            ])
+          }
+          lastFunctionName = undefined
           return
         }
 
@@ -325,7 +359,20 @@ export default function App() {
           if (likelyChunkedAssistant) {
             appendAssistantChunk(chunkContent)
           } else {
-            appendAssistantMessage(chunkContent)
+            const cards = detectAndNormalizeCards(chunkContent)
+            if (cards) {
+              setMessages((prev) => [
+                ...prev,
+                {
+                  id: crypto.randomUUID(),
+                  type: 'ASSISTANT',
+                  content: '',
+                  cards,
+                },
+              ])
+            } else {
+              appendAssistantMessage(chunkContent)
+            }
           }
           return
         }
@@ -346,7 +393,20 @@ export default function App() {
 
         const fallbackAssistantText = extractAssistantText(parsedRecord)
         if (fallbackAssistantText) {
-          appendAssistantMessage(fallbackAssistantText)
+          const cards = detectAndNormalizeCards(fallbackAssistantText)
+          if (cards) {
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: crypto.randomUUID(),
+                type: 'ASSISTANT',
+                content: '',
+                cards,
+              },
+            ])
+          } else {
+            appendAssistantMessage(fallbackAssistantText)
+          }
         }
       }
 
@@ -425,22 +485,55 @@ export default function App() {
 
       <div className="chat">
         {visibleMessages.map((message) => {
+          const isDebug =
+            message.type === 'FUNCTION_CALL' || message.type === 'FUNCTION_RETURN'
           const className =
             message.type === 'USER'
               ? 'msg user'
-              : message.type === 'FUNCTION_CALL' || message.type === 'FUNCTION_RETURN'
+              : isDebug
                 ? 'msg debug'
                 : 'msg assistant'
 
+          if (message.type === 'USER') {
+            return (
+              <div key={message.id} className={className}>
+                {message.content}
+              </div>
+            )
+          }
+
+          if (message.cards) {
+            const { jobs, courses } = message.cards
+            return (
+              <div key={message.id} className="msg assistant">
+                {message.content ? (
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    {message.content}
+                  </ReactMarkdown>
+                ) : null}
+                {jobs && jobs.length > 0 ? (
+                  <div className="cards">
+                    {jobs.map((job, i) => (
+                      <JobCell key={`${job.title}-${job.company}-${i}`} {...job} />
+                    ))}
+                  </div>
+                ) : null}
+                {courses && courses.length > 0 ? (
+                  <div className="cards">
+                    {courses.map((course, i) => (
+                      <CourseCell key={`${course.title}-${course.provider}-${i}`} {...course} />
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            )
+          }
+
           return (
             <div key={message.id} className={className}>
-              {message.type === 'USER' ? (
-                message.content
-              ) : (
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                  {message.content}
-                </ReactMarkdown>
-              )}
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                {message.content}
+              </ReactMarkdown>
             </div>
           )
         })}

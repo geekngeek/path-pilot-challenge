@@ -212,6 +212,44 @@ button:disabled {
   white-space: nowrap;
 }
 
+.cell-skills {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+
+.skill-tag {
+  display: inline-block;
+  background: #e2e8f0;
+  color: #334155;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 12px;
+  white-space: nowrap;
+}
+
+.msg.assistant .cards {
+  margin-top: 8px;
+  overflow-x: auto;
+}
+
+.msg.assistant:has(.cards) {
+  max-width: 100%;
+}
+
+@media (max-width: 860px) {
+  .desktop-cell {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+
+  .cell-media {
+    justify-self: start;
+  }
+}
+
 @media (max-width: 640px) {
   .composer {
     grid-template-columns: 1fr;

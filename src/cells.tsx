@@ -5,6 +5,7 @@ interface JobCellProps {
   companyLogo?: string
   fitScore?: string
   url?: string
+  skills?: string[]
 }
 
 interface CourseCellProps {
@@ -47,6 +48,7 @@ export function JobCell({
   companyLogo,
   fitScore,
   url,
+  skills,
 }: JobCellProps) {
   return (
     <div className="desktop-cell">
@@ -57,6 +59,13 @@ export function JobCell({
       <Field label="Company" value={company} />
       <Field label="Location" value={location} />
       <Field label="Fit Score" value={fitScore || 'n/a'} />
+      {skills && skills.length > 0 ? (
+        <div className="cell-skills">
+          {skills.map((skill) => (
+            <span key={skill} className="skill-tag">{skill}</span>
+          ))}
+        </div>
+      ) : null}
       {url ? (
         <a className="cell-link" href={url} target="_blank" rel="noreferrer">
           Open job
