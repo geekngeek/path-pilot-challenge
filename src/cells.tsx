@@ -1,3 +1,5 @@
+import { useState } from 'react'
+
 interface JobCellProps {
   title: string
   company: string
@@ -22,23 +24,35 @@ function Field({ label, value }: { label: string; value: string }) {
   return (
     <div className="cell-field">
       <span className="cell-label">{label}</span>
-      <span className="cell-value">{value}</span>
+      <span className="cell-value">{value || 'n/a'}</span>
     </div>
   )
 }
 
-function Logo({
-  src,
-  alt,
-}: {
-  src?: string
-  alt: string
-}) {
-  if (!src) {
-    return <div className="cell-logo-placeholder">{(alt.slice(0, 1) || '?').toUpperCase()}</div>
+function Placeholder({ alt }: { alt: string }) {
+  return (
+    <div className="cell-logo-placeholder">
+      {(alt.slice(0, 1) || '?').toUpperCase()}
+    </div>
+  )
+}
+
+function Logo({ src, alt }: { src?: string; alt: string }) {
+  const [broken, setBroken] = useState(false)
+
+  if (!src || broken) {
+    return <Placeholder alt={alt} />
   }
 
-  return <img className="cell-logo" src={src} alt={alt} loading="lazy" />
+  return (
+    <img
+      className="cell-logo"
+      src={src}
+      alt={alt}
+      loading="lazy"
+      onError={() => setBroken(true)}
+    />
+  )
 }
 
 export function JobCell({

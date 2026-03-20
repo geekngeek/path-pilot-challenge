@@ -1,4 +1,4 @@
-import { FormEvent, useMemo, useRef, useState } from 'react'
+import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { JobCell, CourseCell } from './cells'
@@ -309,6 +309,14 @@ function createStreamProcessor(callbacks: StreamCallbacks) {
   return { parseLine, flush }
 }
 
+function prettyJson(raw: string): string {
+  try {
+    return JSON.stringify(JSON.parse(raw), null, 2)
+  } catch {
+    return raw
+  }
+}
+
 export default function App() {
   const [debugMode, setDebugMode] = useState(false)
   const [sessionId, setSessionId] = useState<string | null>(null)
@@ -318,6 +326,12 @@ export default function App() {
   const [isStreaming, setIsStreaming] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
+  const chatEndRef = useRef<HTMLDivElement | null>(null)
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages, liveAssistantText])
 
   const hiddenDebugCount = useMemo(
     () =>
@@ -338,6 +352,15 @@ export default function App() {
       }),
     [debugMode, messages],
   )
+
+  function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault()
+      if (input.trim() && !isStreaming) {
+        sendMessage(event as unknown as FormEvent)
+      }
+    }
+  }
 
   async function sendMessage(event: FormEvent) {
     event.preventDefault()
@@ -439,8 +462,11 @@ export default function App() {
       setIsStreaming(false)
       setLiveAssistantText('')
       abortRef.current = null
+      textareaRef.current?.focus()
     }
   }
+
+  const showTypingIndicator = isStreaming && !liveAssistantText
 
   return (
     <div className="app">
@@ -483,6 +509,14 @@ export default function App() {
             )
           }
 
+          if (isDebug) {
+            return (
+              <div key={message.id} className={className}>
+                <pre className="debug-json">{prettyJson(message.content)}</pre>
+              </div>
+            )
+          }
+
           if (message.cards) {
             const { jobs, courses } = message.cards
             return (
@@ -494,6 +528,7 @@ export default function App() {
                 ) : null}
                 {jobs && jobs.length > 0 ? (
                   <div className="cards">
+                    <div className="cards-header">{jobs.length} job{jobs.length !== 1 ? 's' : ''} found</div>
                     {jobs.map((job, i) => (
                       <JobCell key={`${job.title}-${job.company}-${i}`} {...job} />
                     ))}
@@ -501,6 +536,7 @@ export default function App() {
                 ) : null}
                 {courses && courses.length > 0 ? (
                   <div className="cards">
+                    <div className="cards-header">{courses.length} course{courses.length !== 1 ? 's' : ''} found</div>
                     {courses.map((course, i) => (
                       <CourseCell key={`${course.title}-${course.provider}-${i}`} {...course} />
                     ))}
@@ -525,14 +561,29 @@ export default function App() {
             </ReactMarkdown>
           </div>
         ) : null}
+        {showTypingIndicator ? (
+          <div className="msg assistant typing-indicator">
+            <span /><span /><span />
+          </div>
+        ) : null}
+        <div ref={chatEndRef} />
       </div>
 
-      {error ? <div className="error">{error}</div> : null}
+      {error ? (
+        <div className="error-banner">
+          <span>{error}</span>
+          <button className="error-dismiss" type="button" onClick={() => setError(null)}>
+            &times;
+          </button>
+        </div>
+      ) : null}
 
       <form className="composer" onSubmit={sendMessage}>
         <textarea
+          ref={textareaRef}
           value={input}
           onChange={(event) => setInput(event.target.value)}
+          onKeyDown={handleKeyDown}
           placeholder="Send a message"
           disabled={isStreaming}
         />
