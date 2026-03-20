@@ -35,7 +35,7 @@ function Logo({
   alt: string
 }) {
   if (!src) {
-    return <div className="cell-logo-placeholder">{alt.slice(0, 1).toUpperCase()}</div>
+    return <div className="cell-logo-placeholder">{(alt.slice(0, 1) || '?').toUpperCase()}</div>
   }
 
   return <img className="cell-logo" src={src} alt={alt} loading="lazy" />

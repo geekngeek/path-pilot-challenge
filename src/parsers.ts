@@ -31,71 +31,96 @@ function str(value: unknown): string | undefined {
   return undefined
 }
 
-function firstStr(...candidates: unknown[]): string {
-  for (const c of candidates) {
-    const s = str(c)
-    if (s) return s
+function pick(raw: RawRecord, keys: string[]): string | undefined {
+  for (const k of keys) {
+    const v = str(raw[k])
+    if (v) return v
   }
-  return ''
+  return undefined
+}
+
+function pickRequired(raw: RawRecord, keys: string[]): string {
+  return pick(raw, keys) ?? ''
 }
 
 function toStringArray(value: unknown): string[] {
+  let items: string[]
   if (Array.isArray(value)) {
-    return value
+    items = value
       .map((v) => (typeof v === 'string' ? v.trim() : ''))
       .filter(Boolean)
+  } else if (typeof value === 'string' && value.trim()) {
+    items = value.split(',').map((s) => s.trim()).filter(Boolean)
+  } else {
+    return []
   }
-  if (typeof value === 'string' && value.trim()) {
-    return value.split(',').map((s) => s.trim()).filter(Boolean)
+  return [...new Set(items)]
+}
+
+function pickArray(raw: RawRecord, keys: string[]): string[] {
+  for (const k of keys) {
+    if (raw[k] !== undefined && raw[k] !== null) {
+      const result = toStringArray(raw[k])
+      if (result.length > 0) return result
+    }
   }
   return []
 }
 
+const JOB_TITLE_KEYS = ['title', 'job_title', 'jobTitle', 'name', 'position', 'role']
+const JOB_COMPANY_KEYS = ['company', 'company_name', 'companyName', 'employer', 'organization', 'org']
+const JOB_LOCATION_KEYS = ['location', 'city', 'job_location', 'jobLocation', 'area', 'region']
+const JOB_LOGO_KEYS = ['companyLogo', 'company_logo', 'logo', 'logo_url', 'logoUrl', 'image']
+const JOB_SCORE_KEYS = ['fitScore', 'fit_score', 'score', 'match_score', 'matchScore', 'fit']
+const JOB_URL_KEYS = ['url', 'link', 'apply_url', 'applyUrl', 'job_url', 'jobUrl', 'href']
+const JOB_SKILLS_KEYS = ['skills', 'required_skills', 'requiredSkills', 'skill_tags', 'skillTags', 'technologies', 'tech_stack', 'techStack', 'tags']
+
+const COURSE_TITLE_KEYS = ['title', 'course_title', 'courseTitle', 'name', 'course_name', 'courseName']
+const COURSE_PROVIDER_KEYS = ['provider', 'platform', 'source', 'institution', 'school', 'vendor', 'offered_by', 'offeredBy']
+const COURSE_LEVEL_KEYS = ['level', 'difficulty', 'skill_level', 'skillLevel', 'difficulty_level', 'difficultyLevel']
+const COURSE_IMAGE_KEYS = ['image', 'thumbnail', 'image_url', 'imageUrl', 'logo', 'cover']
+const COURSE_RATING_KEYS = ['rating', 'stars', 'score', 'review_score', 'reviewScore']
+const COURSE_PRICE_KEYS = ['price', 'cost', 'fee']
+const COURSE_URL_KEYS = ['url', 'link', 'course_url', 'courseUrl', 'href']
+
 function normalizeJob(raw: RawRecord): NormalizedJob {
   return {
-    title: firstStr(raw.title, raw.job_title, raw.jobTitle, raw.name, raw.position, raw.role),
-    company: firstStr(raw.company, raw.company_name, raw.companyName, raw.employer, raw.organization, raw.org),
-    location: firstStr(raw.location, raw.city, raw.job_location, raw.jobLocation, raw.area, raw.region),
-    companyLogo: str(raw.companyLogo) ?? str(raw.company_logo) ?? str(raw.logo) ?? str(raw.logo_url) ?? str(raw.logoUrl) ?? str(raw.image),
-    fitScore: str(raw.fitScore) ?? str(raw.fit_score) ?? str(raw.score) ?? str(raw.match_score) ?? str(raw.matchScore) ?? str(raw.fit),
-    url: str(raw.url) ?? str(raw.link) ?? str(raw.apply_url) ?? str(raw.applyUrl) ?? str(raw.job_url) ?? str(raw.jobUrl) ?? str(raw.href),
-    skills: toStringArray(raw.skills ?? raw.required_skills ?? raw.requiredSkills ?? raw.skill_tags ?? raw.skillTags ?? raw.technologies ?? raw.tech_stack ?? raw.techStack ?? raw.tags),
+    title: pickRequired(raw, JOB_TITLE_KEYS),
+    company: pickRequired(raw, JOB_COMPANY_KEYS),
+    location: pickRequired(raw, JOB_LOCATION_KEYS),
+    companyLogo: pick(raw, JOB_LOGO_KEYS),
+    fitScore: pick(raw, JOB_SCORE_KEYS),
+    url: pick(raw, JOB_URL_KEYS),
+    skills: pickArray(raw, JOB_SKILLS_KEYS),
   }
 }
 
 function normalizeCourse(raw: RawRecord): NormalizedCourse {
   return {
-    title: firstStr(raw.title, raw.course_title, raw.courseTitle, raw.name, raw.course_name, raw.courseName),
-    provider: firstStr(raw.provider, raw.platform, raw.source, raw.institution, raw.school, raw.vendor, raw.offered_by, raw.offeredBy),
-    level: firstStr(raw.level, raw.difficulty, raw.skill_level, raw.skillLevel, raw.difficulty_level, raw.difficultyLevel),
-    image: str(raw.image) ?? str(raw.thumbnail) ?? str(raw.image_url) ?? str(raw.imageUrl) ?? str(raw.logo) ?? str(raw.cover),
-    rating: str(raw.rating) ?? str(raw.stars) ?? str(raw.score) ?? str(raw.review_score) ?? str(raw.reviewScore),
-    price: str(raw.price) ?? str(raw.cost) ?? str(raw.fee),
-    url: str(raw.url) ?? str(raw.link) ?? str(raw.course_url) ?? str(raw.courseUrl) ?? str(raw.href),
+    title: pickRequired(raw, COURSE_TITLE_KEYS),
+    provider: pickRequired(raw, COURSE_PROVIDER_KEYS),
+    level: pickRequired(raw, COURSE_LEVEL_KEYS),
+    image: pick(raw, COURSE_IMAGE_KEYS),
+    rating: pick(raw, COURSE_RATING_KEYS),
+    price: pick(raw, COURSE_PRICE_KEYS),
+    url: pick(raw, COURSE_URL_KEYS),
   }
 }
 
-const JOB_FIELD_SIGNALS = ['company', 'company_name', 'companyName', 'employer', 'organization', 'fitScore', 'fit_score', 'apply_url', 'applyUrl', 'job_title', 'jobTitle', 'companyLogo', 'company_logo'] as const
-const COURSE_FIELD_SIGNALS = ['provider', 'platform', 'institution', 'level', 'difficulty', 'skill_level', 'skillLevel', 'rating', 'stars', 'price', 'cost', 'course_title', 'courseTitle'] as const
+const JOB_SIGNAL_KEYS = ['company', 'company_name', 'companyName', 'employer', 'organization', 'fitScore', 'fit_score', 'apply_url', 'applyUrl', 'job_title', 'jobTitle', 'companyLogo', 'company_logo'] as const
+const COURSE_SIGNAL_KEYS = ['provider', 'platform', 'institution', 'level', 'difficulty', 'skill_level', 'skillLevel', 'rating', 'stars', 'price', 'cost', 'course_title', 'courseTitle'] as const
+const NAME_KEYS = ['title', 'name', 'job_title', 'jobTitle', 'course_title', 'courseTitle', 'position', 'role'] as const
 
-function looksLikeJob(record: RawRecord): boolean {
+function signalCount(record: RawRecord, keys: readonly string[]): number {
   let hits = 0
-  for (const key of JOB_FIELD_SIGNALS) {
+  for (const key of keys) {
     if (record[key] !== undefined && record[key] !== null && record[key] !== '') hits++
   }
-  return hits >= 1 && hasNameField(record)
-}
-
-function looksLikeCourse(record: RawRecord): boolean {
-  let hits = 0
-  for (const key of COURSE_FIELD_SIGNALS) {
-    if (record[key] !== undefined && record[key] !== null && record[key] !== '') hits++
-  }
-  return hits >= 2 && hasNameField(record)
+  return hits
 }
 
 function hasNameField(record: RawRecord): boolean {
-  return !!(str(record.title) || str(record.name) || str(record.job_title) || str(record.jobTitle) || str(record.course_title) || str(record.courseTitle) || str(record.position) || str(record.role))
+  return NAME_KEYS.some((k) => !!str(record[k]))
 }
 
 function isRecord(value: unknown): value is RawRecord {
@@ -173,15 +198,18 @@ export function detectAndNormalizeCards(
   }
 
   const first = records[0]
-  if (looksLikeCourse(first)) {
+  if (!hasNameField(first)) return null
+
+  const jobScore = signalCount(first, JOB_SIGNAL_KEYS)
+  const courseScore = signalCount(first, COURSE_SIGNAL_KEYS)
+
+  if (jobScore < 2 && courseScore < 2) return null
+
+  if (courseScore > jobScore) {
     const courses = records.map(normalizeCourse).filter((c) => c.title || c.provider)
     return courses.length > 0 ? { courses } : null
   }
 
-  if (looksLikeJob(first)) {
-    const jobs = records.map(normalizeJob).filter((j) => j.title || j.company)
-    return jobs.length > 0 ? { jobs } : null
-  }
-
-  return null
+  const jobs = records.map(normalizeJob).filter((j) => j.title || j.company)
+  return jobs.length > 0 ? { jobs } : null
 }

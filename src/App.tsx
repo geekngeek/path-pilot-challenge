@@ -13,6 +13,13 @@ type MessageType =
   | 'FUNCTION_RETURN'
   | 'ERROR'
 
+const VALID_MESSAGE_TYPES = new Set<string>([
+  'USER', 'ASSISTANT', 'ASSISSTANT', 'CHATBOT',
+  'FUNCTION_CALL', 'FUNCTION_RETURN', 'ERROR',
+])
+
+const ASSISTANT_LIKE_TYPES = new Set<string>(['ASSISTANT', 'ASSISSTANT', 'CHATBOT'])
+
 interface ChatMessage {
   id: string
   type: MessageType
@@ -44,13 +51,7 @@ const DEFAULT_CHAT_MODEL = { type: 'google', model: 'gemini-2.5-flash' }
 const DEFAULT_SUGG_MODEL = { type: 'fireworks', model: 'mixtral-8x22b-instruct' }
 
 function messageTypeFromChunk(chunk: StreamChunk): MessageType | null {
-  if (chunk.type === 'USER') return 'USER'
-  if (chunk.type === 'ASSISTANT') return 'ASSISTANT'
-  if (chunk.type === 'ASSISSTANT') return 'ASSISSTANT'
-  if (chunk.type === 'CHATBOT') return 'CHATBOT'
-  if (chunk.type === 'FUNCTION_CALL') return 'FUNCTION_CALL'
-  if (chunk.type === 'FUNCTION_RETURN') return 'FUNCTION_RETURN'
-  if (chunk.type === 'ERROR') return 'ERROR'
+  if (chunk.type && VALID_MESSAGE_TYPES.has(chunk.type)) return chunk.type as MessageType
   return null
 }
 
@@ -95,14 +96,13 @@ function extractAssistantText(value: unknown): string | null {
       const msg = record.messages[i]
       if (!msg || typeof msg !== 'object') continue
       const msgRecord = msg as Record<string, unknown>
-      const type = msgRecord.type
-      const content = msgRecord.content
       if (
-        (type === 'ASSISTANT' || type === 'ASSISSTANT' || type === 'CHATBOT') &&
-        typeof content === 'string' &&
-        content.trim()
+        typeof msgRecord.type === 'string' &&
+        ASSISTANT_LIKE_TYPES.has(msgRecord.type) &&
+        typeof msgRecord.content === 'string' &&
+        msgRecord.content.trim()
       ) {
-        return content
+        return msgRecord.content
       }
     }
   }
@@ -151,6 +151,162 @@ function getChallengeToken(): string | null {
   const token = import.meta.env.VITE_CHALLENGE_TOKEN as string | undefined
   if (token && token.trim()) return token.trim()
   return null
+}
+
+interface StreamCallbacks {
+  setSessionId: (id: string) => void
+  setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>
+  setLiveAssistantText: (text: string) => void
+  setError: (err: string) => void
+}
+
+function createStreamProcessor(callbacks: StreamCallbacks) {
+  let streamedAssistantText = ''
+  let lastFunctionName: string | undefined
+
+  const appendChunk = (textChunk: string) => {
+    console.log('[challenge][stream][append-chunk]', textChunk)
+    streamedAssistantText += textChunk
+    callbacks.setLiveAssistantText(streamedAssistantText)
+  }
+
+  const appendMessage = (textValue: string) => {
+    console.log('[challenge][stream][append-message]', textValue)
+    callbacks.setMessages((prev) => [
+      ...prev,
+      { id: crypto.randomUUID(), type: 'ASSISTANT', content: textValue },
+    ])
+  }
+
+  const flush = () => {
+    if (streamedAssistantText.trim()) {
+      appendMessage(streamedAssistantText)
+    }
+    streamedAssistantText = ''
+    callbacks.setLiveAssistantText('')
+  }
+
+  const appendCardMessage = (cards: CardData) => {
+    flush()
+    callbacks.setMessages((prev) => [
+      ...prev,
+      { id: crypto.randomUUID(), type: 'ASSISTANT', content: '', cards },
+    ])
+  }
+
+  const processChunk = (parsed: unknown) => {
+    if (isSessionInfoChunk(parsed)) {
+      if (parsed.session_id) callbacks.setSessionId(parsed.session_id)
+      flush()
+      return
+    }
+
+    const parsedRecord = asRecord(parsed)
+    if (!parsedRecord) return
+
+    if (typeof parsedRecord.sessionId === 'string' && parsedRecord.sessionId) {
+      callbacks.setSessionId(parsedRecord.sessionId)
+    }
+
+    const chunk = parsedRecord as StreamChunk
+    const type = messageTypeFromChunk(chunk)
+    const chunkContent = typeof chunk.content === 'string' ? chunk.content : null
+
+    if ((chunk.fragment === true || chunk.fragment === 'true') && chunkContent) {
+      appendChunk(chunkContent)
+      return
+    }
+
+    if (chunk.end_of_content === true) {
+      flush()
+      return
+    }
+
+    if (type === 'FUNCTION_CALL') {
+      const fnName = extractFunctionName(parsedRecord)
+      if (fnName) lastFunctionName = fnName
+      callbacks.setMessages((prev) => [
+        ...prev,
+        { id: crypto.randomUUID(), type, content: JSON.stringify(chunk) },
+      ])
+      return
+    }
+
+    if (type === 'FUNCTION_RETURN') {
+      const cards = detectAndNormalizeCards(chunkContent, lastFunctionName)
+      callbacks.setMessages((prev) => {
+        const next = [
+          ...prev,
+          { id: crypto.randomUUID(), type, content: JSON.stringify(chunk) },
+        ]
+        if (cards) {
+          next.push({ id: crypto.randomUUID(), type: 'ASSISTANT' as MessageType, content: '', cards })
+        }
+        return next
+      })
+      if (cards) flush()
+      lastFunctionName = undefined
+      return
+    }
+
+    if (type && ASSISTANT_LIKE_TYPES.has(type) && chunkContent !== null) {
+      const hasFragmentFlag = chunk.fragment === true || chunk.fragment === 'true'
+      const likelyChunked = hasFragmentFlag || typeof chunk.i === 'number'
+      if (likelyChunked) {
+        appendChunk(chunkContent)
+      } else {
+        const cards = detectAndNormalizeCards(chunkContent)
+        if (cards) {
+          appendCardMessage(cards)
+        } else {
+          appendMessage(chunkContent)
+        }
+      }
+      return
+    }
+
+    if (type === 'ERROR') {
+      const errorText = extractErrorText(parsedRecord)
+      callbacks.setMessages((prev) => [
+        ...prev,
+        { id: crypto.randomUUID(), type: 'ERROR', content: errorText },
+      ])
+      callbacks.setError(errorText)
+      return
+    }
+
+    const fallbackText = extractAssistantText(parsedRecord)
+    if (fallbackText) {
+      const cards = detectAndNormalizeCards(fallbackText)
+      if (cards) {
+        appendCardMessage(cards)
+      } else {
+        appendMessage(fallbackText)
+      }
+    }
+  }
+
+  const parseLine = (rawLine: string) => {
+    const line = rawLine.trim()
+    if (!line) return
+
+    console.log('[challenge][stream][raw-line]', line)
+
+    const normalized = line.startsWith('data:')
+      ? line.slice(5).trim()
+      : line
+    if (!normalized) return
+
+    const parsed = safeParseJson(normalized)
+    if (!parsed) {
+      console.log('[challenge][stream][parse-failed]', normalized)
+      return
+    }
+    console.log('[challenge][stream][parsed-chunk]', parsed)
+    processChunk(parsed)
+  }
+
+  return { parseLine, flush }
 }
 
 export default function App() {
@@ -247,188 +403,13 @@ export default function App() {
 
       const decoder = new TextDecoder('utf-8')
       let buffer = ''
-      let streamedAssistantText = ''
 
-      const appendAssistantChunk = (textChunk: string) => {
-        console.log('[challenge][stream][append-chunk]', textChunk)
-        streamedAssistantText += textChunk
-        setLiveAssistantText(streamedAssistantText)
-      }
-
-      const appendAssistantMessage = (textValue: string) => {
-        console.log('[challenge][stream][append-message]', textValue)
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: crypto.randomUUID(),
-            type: 'ASSISTANT',
-            content: textValue,
-          },
-        ])
-      }
-
-      const flushLiveAssistantText = () => {
-        if (streamedAssistantText.trim()) {
-          appendAssistantMessage(streamedAssistantText)
-        }
-        streamedAssistantText = ''
-        setLiveAssistantText('')
-      }
-
-      let lastFunctionName: string | undefined
-
-      const processParsedChunk = (parsed: unknown) => {
-        if (isSessionInfoChunk(parsed)) {
-          if (parsed.session_id) {
-            setSessionId(parsed.session_id)
-          }
-          flushLiveAssistantText()
-          return
-        }
-
-        const parsedRecord = asRecord(parsed)
-        if (!parsedRecord) return
-
-        if (typeof parsedRecord.sessionId === 'string' && parsedRecord.sessionId) {
-          setSessionId(parsedRecord.sessionId)
-        }
-
-        const chunk = parsedRecord as StreamChunk
-        const type = messageTypeFromChunk(chunk)
-        const chunkContent = typeof chunk.content === 'string' ? chunk.content : null
-
-        if ((chunk.fragment === true || chunk.fragment === 'true') && chunkContent) {
-          appendAssistantChunk(chunkContent)
-          return
-        }
-
-        if (chunk.end_of_content === true) {
-          flushLiveAssistantText()
-          return
-        }
-
-        if (type === 'FUNCTION_CALL') {
-          const fnName = extractFunctionName(parsedRecord)
-          if (fnName) lastFunctionName = fnName
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: crypto.randomUUID(),
-              type,
-              content: JSON.stringify(chunk),
-            },
-          ])
-          return
-        }
-
-        if (type === 'FUNCTION_RETURN') {
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: crypto.randomUUID(),
-              type,
-              content: JSON.stringify(chunk),
-            },
-          ])
-
-          const cards = detectAndNormalizeCards(chunkContent, lastFunctionName)
-          if (cards) {
-            flushLiveAssistantText()
-            setMessages((prev) => [
-              ...prev,
-              {
-                id: crypto.randomUUID(),
-                type: 'ASSISTANT',
-                content: '',
-                cards,
-              },
-            ])
-          }
-          lastFunctionName = undefined
-          return
-        }
-
-        const isAssistantType =
-          type === 'ASSISTANT' || type === 'ASSISSTANT' || type === 'CHATBOT'
-        const hasFragmentFlag =
-          chunk.fragment === true || chunk.fragment === 'true'
-        const likelyChunkedAssistant =
-          hasFragmentFlag || typeof chunk.i === 'number'
-
-        if (isAssistantType && chunkContent !== null) {
-          if (likelyChunkedAssistant) {
-            appendAssistantChunk(chunkContent)
-          } else {
-            const cards = detectAndNormalizeCards(chunkContent)
-            if (cards) {
-              setMessages((prev) => [
-                ...prev,
-                {
-                  id: crypto.randomUUID(),
-                  type: 'ASSISTANT',
-                  content: '',
-                  cards,
-                },
-              ])
-            } else {
-              appendAssistantMessage(chunkContent)
-            }
-          }
-          return
-        }
-
-        if (type === 'ERROR') {
-          const errorText = extractErrorText(parsedRecord)
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: crypto.randomUUID(),
-              type: 'ERROR',
-              content: errorText,
-            },
-          ])
-          setError(errorText)
-          return
-        }
-
-        const fallbackAssistantText = extractAssistantText(parsedRecord)
-        if (fallbackAssistantText) {
-          const cards = detectAndNormalizeCards(fallbackAssistantText)
-          if (cards) {
-            setMessages((prev) => [
-              ...prev,
-              {
-                id: crypto.randomUUID(),
-                type: 'ASSISTANT',
-                content: '',
-                cards,
-              },
-            ])
-          } else {
-            appendAssistantMessage(fallbackAssistantText)
-          }
-        }
-      }
-
-      const parseLine = (rawLine: string) => {
-        const line = rawLine.trim()
-        if (!line) return
-
-        console.log('[challenge][stream][raw-line]', line)
-
-        const normalized = line.startsWith('data:')
-          ? line.slice(5).trim()
-          : line
-        if (!normalized) return
-
-        const parsed = safeParseJson(normalized)
-        if (!parsed) {
-          console.log('[challenge][stream][parse-failed]', normalized)
-          return
-        }
-        console.log('[challenge][stream][parsed-chunk]', parsed)
-        processParsedChunk(parsed)
-      }
+      const { parseLine, flush } = createStreamProcessor({
+        setSessionId,
+        setMessages,
+        setLiveAssistantText,
+        setError,
+      })
 
       while (true) {
         const { done, value } = await reader.read()
@@ -438,7 +419,7 @@ export default function App() {
           if (buffer.trim()) {
             parseLine(buffer)
           }
-          flushLiveAssistantText()
+          flush()
           break
         }
 
